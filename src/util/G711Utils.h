@@ -22,32 +22,49 @@ public:
     }
 
     static uint8_t linearToULaw(int16_t pcm) {
-        int mask = (pcm < 0) ? 0xFF : 0x7F;
+        int mask = (pcm < 0) ? 0x7F : 0xFF;
         if (pcm < 0) pcm = -pcm;
-        pcm += 128 + 4;
-        if (pcm > 32767) pcm = 32767;
+        if (pcm > 32635) pcm = 32635;
+        pcm += 0x84;
+
         int seg = 0;
-        int t = pcm >> 7;
-        while (t > 1) {
-            t >>= 1;
-            seg++;
-        }
-        return ~(mask ^ ((seg << 4) | ((pcm >> (seg + 3)) & 0x0F)));
+        if (pcm <= 0xFF) seg = 0;
+        else if (pcm <= 0x1FF) seg = 1;
+        else if (pcm <= 0x3FF) seg = 2;
+        else if (pcm <= 0x7FF) seg = 3;
+        else if (pcm <= 0xFFF) seg = 4;
+        else if (pcm <= 0x1FFF) seg = 5;
+        else if (pcm <= 0x3FFF) seg = 6;
+        else seg = 7;
+
+        uint8_t u_val = (seg << 4) | ((pcm >> (seg + 3)) & 0x0F);
+        return u_val ^ mask;
     }
 
     static uint8_t linearToALaw(int16_t pcm) {
-        int mask = (pcm < 0) ? 0x7F : 0xFF;
-        if (pcm < 0) pcm = -pcm;
-        int seg = 0;
-        int t = pcm >> 8;
-        while (t > 0) {
-            t >>= 1;
-            seg++;
+        int mask;
+        if (pcm >= 0) {
+            mask = 0xD5;
+        } else {
+            pcm = -pcm;
+            mask = 0x55;
         }
-        uint8_t alaw;
-        if (seg == 0) alaw = (pcm >> 4) & 0x0F;
-        else alaw = (seg << 4) | ((pcm >> (seg + 3)) & 0x0F);
-        return alaw ^ 0x55 ^ mask;
+        if (pcm > 32767) pcm = 32767;
+
+        int seg;
+        if (pcm <= 0xFF) seg = 0;
+        else if (pcm <= 0x1FF) seg = 1;
+        else if (pcm <= 0x3FF) seg = 2;
+        else if (pcm <= 0x7FF) seg = 3;
+        else if (pcm <= 0xFFF) seg = 4;
+        else if (pcm <= 0x1FFF) seg = 5;
+        else if (pcm <= 0x3FFF) seg = 6;
+        else seg = 7;
+
+        uint8_t a_val = (seg << 4);
+        if (seg < 2) a_val |= (pcm >> 4) & 0x0F;
+        else a_val |= (pcm >> (seg + 3)) & 0x0F;
+        return a_val ^ mask;
     }
 
     static void decodeULaw(const std::vector<char>& input, std::vector<int16_t>& output) {

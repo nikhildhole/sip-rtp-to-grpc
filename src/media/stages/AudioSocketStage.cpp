@@ -1,5 +1,7 @@
 #include "AudioSocketStage.h"
 #include "../../util/G711Utils.h"
+#include "../../app/Logger.h"
+#include <algorithm>
 
 AudioSocketStage::AudioSocketStage(std::shared_ptr<AudioSocketClient> client, int payloadType)
     : client_(client), payloadType_(payloadType) {
@@ -9,10 +11,19 @@ AudioSocketStage::AudioSocketStage(std::shared_ptr<AudioSocketClient> client, in
 }
 
 void AudioSocketStage::onAudioSocketData(const std::vector<char> &data) {
-    // data is PCM16 Little Endian
-    // We need to encode it back to G.711 for the RTP stream
+    // data is PCM16 Little Endian (based on user feedback)
+    if (data.size() % 2 != 0) return;
+
     std::vector<int16_t> pcm(data.size() / 2);
     memcpy(pcm.data(), data.data(), data.size());
+
+    // Apply gain (3x to address 'low voice')
+    for (auto &sample : pcm) {
+        int32_t val = static_cast<int32_t>(sample) * 3;
+        if (val > 32767) val = 32767;
+        if (val < -32768) val = -32768;
+        sample = static_cast<int16_t>(val);
+    }
 
     std::vector<char> encoded;
     if (payloadType_ == 0) { // PCMU
@@ -40,6 +51,14 @@ void AudioSocketStage::processUplink(std::vector<char> &audio) {
         G711Utils::decodeULaw(audio, pcm);
     } else {
         G711Utils::decodeALaw(audio, pcm);
+    }
+
+    // Apply gain (3x to address 'low voice')
+    for (auto &sample : pcm) {
+        int32_t val = static_cast<int32_t>(sample) * 3;
+        if (val > 32767) val = 32767;
+        if (val < -32768) val = -32768;
+        sample = static_cast<int16_t>(val);
     }
 
     std::vector<char> pcmBytes(pcm.size() * 2);
