@@ -1,0 +1,12 @@
+bind_ip: "127.0.0.1"  # Change this line
+sip_port: 5060
+rtp_port_start: 20000
+rtp_port_end: 30000
+max_calls: 200
+grpc_target: "127.0.0.1:50051"
+codec_preference: ["PCMU", "PCMA"]
+enable_dtmf: true
+echo_mode: true
+recording_mode: "BOTH"
+recording_path: "./recordings"
+log_level: "DEBUG"
