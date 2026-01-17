@@ -16,8 +16,10 @@ public:
   int maxCalls;
   std::string grpcTarget;
   std::vector<std::string> codecPreference;
-  bool echoMode;
-  std::string recordingMode;
+  enum class GatewayMode { ECHO, GRPC, AUDIOSOCKET };
+  GatewayMode mode;
+  std::string audiosocketTarget;
+  bool recordingMode;
   std::string recordingPath;
   std::string logLevel;
 };

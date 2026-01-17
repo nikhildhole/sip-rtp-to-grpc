@@ -6,6 +6,7 @@
 #include <string>
 
 #include "../grpc/VoiceBotClient.h"
+#include "../audiosocket/AudioSocketClient.h"
 #include "../media/MediaPipeline.h"
 #include "../rtp/JitterBuffer.h"
 #include "../sip/SipDialog.h"
@@ -39,11 +40,14 @@ public:
 
 private:
   std::string callId_;
+  std::string fromUser_;
+  std::string toUser_;
   std::shared_ptr<SipDialog> dialog_;
 
   // Media
   std::shared_ptr<MediaPipeline> pipeline_;
   std::shared_ptr<VoiceBotClient> botClient_;
+  std::shared_ptr<AudioSocketClient> tcpClient_;
   JitterBuffer jitterBuffer_;
 
   std::mutex mutex_;

@@ -24,7 +24,6 @@ message CallEvent {
     oneof payload {
         Config config = 2;       // Sent once at start
         AudioChunk audio = 3;    // Recurring audio packets
-        DtmfEvent dtmf = 4;      // Detected DTMF
         ControlEvent control = 5;// Hangup, etc.
     }
 }
@@ -40,10 +39,7 @@ message AudioChunk {
     bytes data = 3;
 }
 
-message DtmfEvent {
-    string digit = 1; // "0"-"9", "*", "#", "A"-"D"
-    bool end = 2;
-}
+
 
 message ControlEvent {
     enum Type {

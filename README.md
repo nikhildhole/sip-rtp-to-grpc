@@ -33,11 +33,11 @@ This guide explains how to compile, configure, and run the gateway.
 2.  Create a build directory:
     ```bash
     mkdir build
-    cd build
     ```
 3.  Configure and Build:
     ```bash
-    cmake ..
+    cmake -S . -B build
+    cd build
     # Linux
     make -j$(nproc)
     

@@ -39,4 +39,6 @@ public:
   int getCSeq() const;
   SipMethod getCSeqMethod() const;
   std::string getBranch() const;
+  std::string getFromUser() const;
+  std::string getToUser() const;
 };

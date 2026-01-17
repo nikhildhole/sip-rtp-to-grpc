@@ -24,8 +24,17 @@ bool Config::load(const std::string &path) {
     }
 
 
-    echoMode = config["echo_mode"].as<bool>(false);
-    recordingMode = config["recording_mode"].as<std::string>("OFF");
+    std::string modeStr = config["mode"].as<std::string>("echo");
+    if (modeStr == "grpc") {
+      mode = GatewayMode::GRPC;
+    } else if (modeStr == "audiosocket" || modeStr == "tcp") {
+      mode = GatewayMode::AUDIOSOCKET;
+    } else {
+      mode = GatewayMode::ECHO;
+    }
+
+    audiosocketTarget = config["audiosocket_target"].as<std::string>(config["tcp_target"].as<std::string>(""));
+    recordingMode = config["recording_mode"].as<bool>(false);
     recordingPath = config["recording_path"].as<std::string>("./recordings");
     logLevel = config["log_level"].as<std::string>("INFO");
 

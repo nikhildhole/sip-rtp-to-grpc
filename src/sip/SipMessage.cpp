@@ -119,3 +119,29 @@ std::string SipMessage::getBranch() const {
   }
   return "";
 }
+
+static std::string extractUserFromUri(const std::string& uri) {
+  // Extract user from <sip:user@host> or sip:user@host
+  size_t start = uri.find("sip:");
+  if (start == std::string::npos) return "";
+  start += 4;
+  
+  size_t end = uri.find('@', start);
+  if (end == std::string::npos) {
+    // Maybe it's just sip:user
+    end = uri.find('>', start);
+    if (end == std::string::npos) end = uri.size();
+  }
+  
+  return uri.substr(start, end - start);
+}
+
+std::string SipMessage::getFromUser() const {
+  auto from = getHeader("From").value_or("");
+  return extractUserFromUri(from);
+}
+
+std::string SipMessage::getToUser() const {
+  auto to = getHeader("To").value_or("");
+  return extractUserFromUri(to);
+}

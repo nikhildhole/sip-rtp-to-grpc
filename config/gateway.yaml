@@ -4,9 +4,9 @@ rtp_port_start: 20000
 rtp_port_end: 30000
 max_calls: 200
 grpc_target: "127.0.0.1:50051"
+tcp_target: "127.0.0.1:9000"
 codec_preference: ["PCMU", "PCMA"]
-enable_dtmf: true
-echo_mode: true
-recording_mode: "BOTH"
+mode: "tcp" # can be echo, grpc, tcp
+recording_mode: true
 recording_path: "./recordings"
 log_level: "DEBUG"
