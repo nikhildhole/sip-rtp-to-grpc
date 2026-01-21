@@ -55,7 +55,8 @@ jobs:
       - name: Install Dependencies (Linux/RHEL)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          dnf install -y epel-release
+          dnf install -y epel-release dnf-plugins-core
+          dnf config-manager --set-enabled powertools
           dnf install -y gcc-c++ cmake make grpc-devel protobuf-devel yaml-cpp-devel
 
       - name: Install Dependencies (macOS)
