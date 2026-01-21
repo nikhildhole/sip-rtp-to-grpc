@@ -20,6 +20,8 @@ async def handle_client(reader, writer):
             payload = await reader.readexactly(length)
 
             # record only audio packets
+            if msg_type == 0x01:
+                print("Received UUID: " + payload.decode('utf-8'))
             if msg_type == 0x10:
                 wf.writeframes(payload)
 

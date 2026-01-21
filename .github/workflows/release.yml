@@ -26,7 +26,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
         include:
           - os: ubuntu-latest
             artifact_name: sip_rtp_gateway-linux
@@ -35,9 +35,6 @@ jobs:
           - os: macos-latest
             artifact_name: sip_rtp_gateway-macos
             asset_extension: .tar.gz
-          - os: windows-latest
-            artifact_name: sip_rtp_gateway-windows
-            asset_extension: .zip
 
     container: ${{ matrix.container }}
 
@@ -62,41 +59,24 @@ jobs:
         run: |
           brew install grpc protobuf yaml-cpp
 
-      - name: Build Dependencies (Windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          vcpkg install grpc:x64-windows protobuf:x64-windows yaml-cpp:x64-windows
-
-      - name: Configure CMake (Non-Windows)
-        if: matrix.os != 'windows-latest'
+      - name: Configure CMake
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Release
-
-      - name: Configure CMake (Windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake"
 
       - name: Build
         run: |
           cmake --build build --config Release
 
-      - name: Package (Linux/macOS)
-        if: matrix.os != 'windows-latest'
+      - name: Package
         run: |
           mkdir dist
-          cp build/sip_rtp_gateway dist/
+          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            cp build/sip_rtp_gateway dist/
+          else
+            cp build/sip_rtp_gateway dist/
+          fi
           cp -r config dist/
           tar -czvf ${{ matrix.artifact_name }}${{ matrix.asset_extension }} -C dist .
-
-      - name: Package (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path dist
-          Copy-Item build/Release/sip_rtp_gateway.exe dist/
-          Copy-Item -Recurse config dist/
-          Compress-Archive -Path dist/* -DestinationPath ${{ matrix.artifact_name }}${{ matrix.asset_extension }}
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4

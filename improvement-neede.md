@@ -1,0 +1,1 @@
+From rtpWorker.cpp -> In a real high-perf scenario, we'd keep a free list or bitmap.
