@@ -26,9 +26,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-20.04, macos-latest, windows-latest]
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-20.04
             artifact_name: sip_rtp_gateway-linux
             asset_extension: .tar.gz
           - os: macos-latest
@@ -45,7 +45,7 @@ jobs:
           submodules: recursive
 
       - name: Install Dependencies (Linux)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-20.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake libgrpc++-dev protobuf-compiler-grpc libyaml-cpp-dev
@@ -59,7 +59,7 @@ jobs:
         if: matrix.os == 'windows-latest'
         uses: lukka/run-vcpkg@v11
         with:
-          vcpkgGitCommitId: 'master'
+          vcpkgGitCommitId: 'a4290518349bb8928de6dbb20e03445e9a4f4c9c' # Recent stable commit
           setupOnly: true
 
       - name: Build Dependencies (Windows)
