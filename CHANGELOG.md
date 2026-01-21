@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/nikhildhole/sip-rtp-to-grpc/compare/v1.1.1...v1.1.2) (2026-01-21)
+
+
+### Bug Fixes
+
+* Remove duplicate `find_package(yaml-cpp)` and add alias for `yaml-cpp::yaml-cpp` if not already defined. ([36a5cad](https://github.com/nikhildhole/sip-rtp-to-grpc/commit/36a5cadf4f120528e7e72966701f009b7a965231))
+
 ## [1.1.1](https://github.com/nikhildhole/sip-rtp-to-grpc/compare/v1.1.0...v1.1.1) (2026-01-21)
 
 
