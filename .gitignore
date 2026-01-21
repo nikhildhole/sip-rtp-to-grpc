@@ -71,3 +71,6 @@ Testing/
 
 # Kamailio
 kamailio/
+
+# python venv
+.venv
