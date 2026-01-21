@@ -13,10 +13,30 @@ jobs:
     outputs:
       new_version: ${{ steps.version.outputs.version }}
       tag_exists: ${{ steps.check_tag.outputs.exists }}
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          submodules: recursive
+
+      - name: Debug repository tree
+        shell: bash
+        run: |
+          echo "===== WORKDIR ====="
+          pwd
+          echo "===== ROOT FILES ====="
+          ls -la
+          echo "===== FIND determine_version.py ====="
+          find . -maxdepth 5 -type f -name "determine_version.py" -print
+          echo "===== LIST scripts/ ====="
+          ls -la scripts || true
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
 
       - name: Set Branch Type
         id: branch_info
@@ -32,17 +52,30 @@ jobs:
         id: version
         shell: bash
         run: |
-          python3 scripts/determine_version.py "${{ steps.branch_info.outputs.type }}" > version.txt
-          VERSION="$(cat version.txt)"
+          # Try the expected location first
+          if [[ -f "scripts/determine_version.py" ]]; then
+            python3 scripts/determine_version.py "${{ steps.branch_info.outputs.type }}" > version.txt
+          else
+            # Auto-detect script anywhere (up to 5 dirs deep)
+            SCRIPT_PATH="$(find . -maxdepth 5 -type f -name "determine_version.py" | head -n 1)"
+            if [[ -z "${SCRIPT_PATH}" ]]; then
+              echo "ERROR: determine_version.py not found in repo."
+              echo "Hint: commit it or fix the path."
+              exit 1
+            fi
+            echo "Found determine_version.py at: ${SCRIPT_PATH}"
+            python3 "${SCRIPT_PATH}" "${{ steps.branch_info.outputs.type }}" > version.txt
+          fi
+
+          VERSION="$(cat version.txt | tr -d '\r\n')"
           echo "Calculated version: $VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Check if Tag Exists
+      - name: Check if Tag Exists (remote)
         id: check_tag
         shell: bash
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          # ✅ correct way to check remote tags
           if git ls-remote --tags origin "refs/tags/${VERSION}" | grep -q "${VERSION}"; then
             echo "Tag ${VERSION} already exists."
             echo "exists=true" >> $GITHUB_OUTPUT
@@ -63,6 +96,8 @@ jobs:
   build-release:
     needs: semantic-release
     if: needs.semantic-release.outputs.tag_exists == 'false'
+    runs-on: ${{ matrix.os }}
+
     strategy:
       fail-fast: false
       matrix:
@@ -77,14 +112,17 @@ jobs:
             artifact_name: macos
             cpack_gen: DragNDrop
 
-    runs-on: ${{ matrix.os }}
-
     steps:
-      # ✅ checkout THE TAG, not main/dev head
-      - uses: actions/checkout@v4
+      - name: Checkout the tag that was created
+        uses: actions/checkout@v4
         with:
           ref: ${{ needs.semantic-release.outputs.new_version }}
           fetch-depth: 0
+          submodules: recursive
+
+      # ---------------------------
+      # Dependencies
+      # ---------------------------
 
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
@@ -96,12 +134,12 @@ jobs:
             protobuf-compiler libprotobuf-dev \
             libgrpc++-dev protobuf-compiler-grpc
 
-      - name: Install dependencies (Mac)
+      - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         shell: bash
         run: |
           brew update
-          brew install protobuf grpc cmake
+          brew install cmake protobuf grpc
 
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows'
@@ -110,7 +148,10 @@ jobs:
           vcpkg install grpc protobuf --triplet x64-windows
           vcpkg integrate install
 
-      # ✅ configure toolchain cleanly per OS
+      # ---------------------------
+      # Configure / Build
+      # ---------------------------
+
       - name: Configure CMake (Linux/macOS)
         if: runner.os != 'Windows'
         shell: bash
@@ -129,22 +170,25 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
 
       - name: Build
+        shell: bash
         run: cmake --build build --config Release
 
-      - name: Package
+      # ---------------------------
+      # Package + Release upload
+      # ---------------------------
+
+      - name: Package (CPack)
         shell: bash
         run: |
           cd build
           cpack -G "${{ matrix.cpack_gen }}" -C Release
 
-      # ✅ upload artifact for debugging + also use it for release upload
-      - name: Upload workflow artifact
+      - name: Upload workflow artifact (for debugging)
         uses: actions/upload-artifact@v4
         with:
           name: ${{ needs.semantic-release.outputs.new_version }}-${{ matrix.artifact_name }}
           path: build/*.*
 
-      # ✅ upload to GitHub Release (create if missing)
       - name: Publish GitHub Release assets
         uses: softprops/action-gh-release@v2
         with:
