@@ -31,11 +31,6 @@ jobs:
             echo "type=dev" >> $GITHUB_OUTPUT
           fi
 
-      # ✅ Version strategy:
-      # main -> v<major>.<minor>.<run_number>
-      # dev  -> v<major>.<minor>.<run_number>-dev
-      #
-      # Change MAJOR/MINOR once and it keeps releasing clean tags.
       - name: Determine Next Version (no script)
         id: version
         shell: bash
@@ -86,15 +81,22 @@ jobs:
           - os: windows-latest
             artifact_name: win64
             cpack_gen: ZIP
+
           - os: ubuntu-latest
             artifact_name: linux-deb
             cpack_gen: DEB
+
           - os: macos-latest
             artifact_name: macos
             cpack_gen: DragNDrop
 
+          # ✅ NEW: RHEL8 build in container (still runs on ubuntu host)
+          - os: ubuntu-latest
+            artifact_name: rhel8-rpm
+            cpack_gen: RPM
+            use_rhel8_container: true
+
     steps:
-      # ✅ Build from the actual tag we created
       - name: Checkout tag
         uses: actions/checkout@v4
         with:
@@ -103,11 +105,11 @@ jobs:
           submodules: recursive
 
       # ---------------------------
-      # Dependencies
+      # Normal builds (Linux/Windows/macOS)
       # ---------------------------
 
-      - name: Install dependencies (Linux)
-        if: runner.os == 'Linux'
+      - name: Install dependencies (Ubuntu)
+        if: runner.os == 'Linux' && matrix.use_rhel8_container != true
         shell: bash
         run: |
           sudo apt-get update
@@ -130,12 +132,8 @@ jobs:
           vcpkg install grpc protobuf --triplet x64-windows
           vcpkg integrate install
 
-      # ---------------------------
-      # Configure / Build
-      # ---------------------------
-
       - name: Configure CMake (Linux/macOS)
-        if: runner.os != 'Windows'
+        if: runner.os != 'Windows' && matrix.use_rhel8_container != true
         shell: bash
         run: |
           cmake -S . -B build \
@@ -151,29 +149,67 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
 
-      - name: Build
+      - name: Build (normal)
+        if: matrix.use_rhel8_container != true
         shell: bash
         run: cmake --build build --config Release
 
-      # ---------------------------
-      # Package
-      # ---------------------------
-
-      - name: Package (CPack)
+      - name: Package (normal)
+        if: matrix.use_rhel8_container != true
         shell: bash
         run: |
           cd build
           cpack -G "${{ matrix.cpack_gen }}" -C Release
+
+      # ---------------------------
+      # ✅ RHEL 8 RPM build (containerized)
+      # ---------------------------
+
+      - name: Build RPM in RHEL 8 container
+        if: matrix.use_rhel8_container == true
+        shell: bash
+        run: |
+          docker run --rm \
+            -v "${PWD}:/src" \
+            -w /src \
+            rockylinux:8 \
+            bash -lc '
+              set -euxo pipefail
+
+              # Install build tools
+              dnf -y update
+              dnf -y install epel-release || true
+              dnf -y install \
+                gcc gcc-c++ make cmake \
+                rpm-build \
+                protobuf-devel protobuf-compiler \
+                git zip tar
+
+              # gRPC dev packages are not always available easily on EL8
+              # If your project requires gRPC at build time, prefer vendoring or vcpkg/conan.
+              # Otherwise remove grpc usage or bring your own static build.
+              #
+              # dnf -y install grpc-devel || true
+
+              cmake -S . -B build \
+                -DPROJECT_VERSION="${{ needs.semantic-release.outputs.new_version }}" \
+                -DCMAKE_BUILD_TYPE=Release
+
+              cmake --build build --config Release
+
+              cd build
+              cpack -G RPM -C Release
+            '
+
+      # ---------------------------
+      # Upload artifacts + publish
+      # ---------------------------
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ needs.semantic-release.outputs.new_version }}-${{ matrix.artifact_name }}
           path: build/*.*
-
-      # ---------------------------
-      # Publish release
-      # ---------------------------
 
       - name: Publish GitHub Release assets
         uses: softprops/action-gh-release@v2
