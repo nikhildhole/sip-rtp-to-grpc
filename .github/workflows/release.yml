@@ -26,11 +26,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-20.04, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         include:
-          - os: ubuntu-20.04
+          - os: ubuntu-latest
             artifact_name: sip_rtp_gateway-linux
             asset_extension: .tar.gz
+            container: rockylinux:8
           - os: macos-latest
             artifact_name: sip_rtp_gateway-macos
             asset_extension: .tar.gz
@@ -38,29 +39,24 @@ jobs:
             artifact_name: sip_rtp_gateway-windows
             asset_extension: .zip
 
+    container: ${{ matrix.container }}
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Install Dependencies (Linux)
-        if: matrix.os == 'ubuntu-20.04'
+      - name: Install Dependencies (Linux/RHEL)
+        if: matrix.os == 'ubuntu-latest'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake libgrpc++-dev protobuf-compiler-grpc libyaml-cpp-dev
+          dnf install -y epel-release
+          dnf install -y gcc-c++ cmake make grpc-devel protobuf-devel yaml-cpp-devel
 
       - name: Install Dependencies (macOS)
         if: matrix.os == 'macos-latest'
         run: |
           brew install grpc protobuf yaml-cpp
-
-      - name: Install Dependencies (Windows)
-        if: matrix.os == 'windows-latest'
-        uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgGitCommitId: 'a4290518349bb8928de6dbb20e03445e9a4f4c9c' # Recent stable commit
-          setupOnly: true
 
       - name: Build Dependencies (Windows)
         if: matrix.os == 'windows-latest'
@@ -75,7 +71,7 @@ jobs:
       - name: Configure CMake (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=${{ env.VCPKG_ROOT }}/scripts/buildsystems/vcpkg.cmake
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake"
 
       - name: Build
         run: |

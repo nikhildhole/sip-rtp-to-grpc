@@ -1,7 +1,6 @@
 #include "AudioSocketStage.h"
 #include "../../util/G711Utils.h"
-#include "../../app/Logger.h"
-#include <algorithm>
+#include <cstring>
 
 AudioSocketStage::AudioSocketStage(std::shared_ptr<AudioSocketClient> client, int payloadType)
     : client_(client), payloadType_(payloadType) {
