@@ -35,7 +35,7 @@ jobs:
           - os: ubuntu-latest
             artifact_name: sip_rtp_gateway-linux
             asset_extension: .tar.gz
-            container: rockylinux:8
+            container: rockylinux:9
           - os: macos-latest
             artifact_name: sip_rtp_gateway-macos
             asset_extension: .tar.gz
@@ -56,7 +56,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           dnf install -y epel-release dnf-plugins-core
-          dnf config-manager --set-enabled powertools || dnf config-manager --set-enabled PowerTools
+          dnf config-manager --set-enabled crb
           dnf makecache
           dnf install -y gcc-c++ cmake make yaml-cpp-devel protobuf-devel protobuf-compiler grpc-devel grpc-plugins
 
