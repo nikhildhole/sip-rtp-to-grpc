@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/nikhildhole/sip-rtp-to-grpc/compare/v1.1.0...v1.1.1) (2026-01-21)
+
+
+### Bug Fixes
+
+* Update DNF dependency installation in release workflow, adding `protobuf-compiler`, `grpc-plugins`, `dnf makecache`, and a fallback for `powertools`. ([dc8bff2](https://github.com/nikhildhole/sip-rtp-to-grpc/commit/dc8bff2a044e1183b2f899d2d9bebd95e7914718))
+
 ## [1.1.0](https://github.com/nikhildhole/sip-rtp-to-grpc/compare/v1.0.4...v1.1.0) (2026-01-21)
 
 
