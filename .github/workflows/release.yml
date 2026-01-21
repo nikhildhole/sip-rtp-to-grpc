@@ -1,0 +1,115 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: google-github-actions/release-please-action@v4
+        id: release
+        with:
+          release-type: simple
+
+  build:
+    name: Build (${{ matrix.os }})
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created || github.event_name == 'workflow_dispatch' }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            artifact_name: sip_rtp_gateway-linux
+            asset_extension: .tar.gz
+          - os: macos-latest
+            artifact_name: sip_rtp_gateway-macos
+            asset_extension: .tar.gz
+          - os: windows-latest
+            artifact_name: sip_rtp_gateway-windows
+            asset_extension: .zip
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Dependencies (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libgrpc++-dev protobuf-compiler-grpc libyaml-cpp-dev
+
+      - name: Install Dependencies (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install grpc protobuf yaml-cpp
+
+      - name: Install Dependencies (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: 'master'
+          setupOnly: true
+
+      - name: Build Dependencies (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          vcpkg install grpc:x64-windows protobuf:x64-windows yaml-cpp:x64-windows
+
+      - name: Configure CMake (Non-Windows)
+        if: matrix.os != 'windows-latest'
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Configure CMake (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=${{ env.VCPKG_ROOT }}/scripts/buildsystems/vcpkg.cmake
+
+      - name: Build
+        run: |
+          cmake --build build --config Release
+
+      - name: Package (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        run: |
+          mkdir dist
+          cp build/sip_rtp_gateway dist/
+          cp -r config dist/
+          tar -czvf ${{ matrix.artifact_name }}${{ matrix.asset_extension }} -C dist .
+
+      - name: Package (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          Copy-Item build/Release/sip_rtp_gateway.exe dist/
+          Copy-Item -Recurse config dist/
+          Compress-Archive -Path dist/* -DestinationPath ${{ matrix.artifact_name }}${{ matrix.asset_extension }}
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}${{ matrix.asset_extension }}
+
+      - name: Upload Release Asset
+        if: ${{ needs.release-please.outputs.release_created }}
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.release-please.outputs.tag_name }}
+          files: ${{ matrix.artifact_name }}${{ matrix.asset_extension }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
