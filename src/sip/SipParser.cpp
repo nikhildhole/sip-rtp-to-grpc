@@ -1,15 +1,16 @@
 #include "SipParser.h"
 #include "SipMessage.h"
 #include <algorithm>
-#include <sstream>
+#include <optional>
+#include <string_view>
 #include <vector>
 
-// Simple trim helper
-static std::string trim(const std::string &s) {
+// Optimized trim helper using string_view
+static std::string_view trim_sv(std::string_view s) {
   auto start = s.find_first_not_of(" \t\r\n");
-  auto end = s.find_last_not_of(" \t\r\n");
-  if (start == std::string::npos)
+  if (start == std::string_view::npos)
     return "";
+  auto end = s.find_last_not_of(" \t\r\n");
   return s.substr(start, end - start + 1);
 }
 
@@ -32,28 +33,41 @@ SipMethod SipParser::parseMethod(std::string_view sv) {
 std::optional<SipMessage> SipParser::parse(const char *buffer, size_t length) {
   SipMessage msg;
   std::string_view raw(buffer, length);
-  std::string rawStr(raw); // Still need a string for istringstream for now, or use string_view-friendly parsing
-  std::istringstream stream(rawStr);
-  std::string line;
+  size_t pos = 0;
+
+  auto get_line = [&]() -> std::optional<std::string_view> {
+    if (pos >= raw.length()) return std::nullopt;
+    size_t end = raw.find("\n", pos);
+    std::string_view line;
+    if (end == std::string_view::npos) {
+      line = raw.substr(pos);
+      pos = raw.length();
+    } else {
+      line = raw.substr(pos, end - pos);
+      pos = end + 1;
+    }
+    if (!line.empty() && line.back() == '\r') {
+      line.remove_suffix(1);
+    }
+    return line;
+  };
 
   // Parse First Line
-  if (!std::getline(stream, line))
-    return std::nullopt;
-  if (!line.empty() && line.back() == '\r')
-    line.pop_back();
+  auto firstLineOpt = get_line();
+  if (!firstLineOpt) return std::nullopt;
+  std::string_view line = *firstLineOpt;
 
   if (line.rfind("SIP/2.0", 0) == 0) {
     // Response: SIP/2.0 200 OK
     msg.isRequest = false;
     msg.version = "SIP/2.0";
     auto firstSpace = line.find(' ');
-    if (firstSpace != std::string::npos) {
+    if (firstSpace != std::string_view::npos) {
       auto secondSpace = line.find(' ', firstSpace + 1);
-      if (secondSpace != std::string::npos) {
+      if (secondSpace != std::string_view::npos) {
         try {
-          msg.statusCode = std::stoi(
-              line.substr(firstSpace + 1, secondSpace - firstSpace - 1));
-          msg.statusPhrase = line.substr(secondSpace + 1);
+          msg.statusCode = std::stoi(std::string(line.substr(firstSpace + 1, secondSpace - firstSpace - 1)));
+          msg.statusPhrase = std::string(line.substr(secondSpace + 1));
         } catch (...) {
           return std::nullopt;
         }
@@ -68,14 +82,14 @@ std::optional<SipMessage> SipParser::parse(const char *buffer, size_t length) {
     msg.isRequest = true;
     auto firstSpace = line.find(' ');
     auto lastSpace = line.rfind(' ');
-    if (firstSpace != std::string::npos && lastSpace != std::string::npos &&
+    if (firstSpace != std::string_view::npos && lastSpace != std::string_view::npos &&
         firstSpace != lastSpace) {
-      std::string method = std::string(line.substr(0, firstSpace));
-      std::transform(method.begin(), method.end(), method.begin(), ::toupper);
-      msg.methodStr = method;
-      msg.method = parseMethod(method);
-      msg.uri = line.substr(firstSpace + 1, lastSpace - firstSpace - 1);
-      msg.version = line.substr(lastSpace + 1);
+      std::string methodStr = std::string(line.substr(0, firstSpace));
+      std::transform(methodStr.begin(), methodStr.end(), methodStr.begin(), ::toupper);
+      msg.methodStr = methodStr;
+      msg.method = parseMethod(msg.methodStr);
+      msg.uri = std::string(line.substr(firstSpace + 1, lastSpace - firstSpace - 1));
+      msg.version = std::string(line.substr(lastSpace + 1));
     } else {
       return std::nullopt;
     }
@@ -84,34 +98,27 @@ std::optional<SipMessage> SipParser::parse(const char *buffer, size_t length) {
   // Headers
   int contentLength = 0;
   std::string lastName;
-  while (std::getline(stream, line)) {
-    if (!line.empty() && line.back() == '\r')
-      line.pop_back();
-    if (line.empty())
+  while (auto lineOpt = get_line()) {
+    std::string_view hLine = *lineOpt;
+    if (hLine.empty())
       break; // End of headers
 
     // Handle folded headers (lines starting with space/tab)
-    if (!line.empty() && (line[0] == ' ' || line[0] == '\t')) {
+    if (!hLine.empty() && (hLine[0] == ' ' || hLine[0] == '\t')) {
       if (!lastName.empty()) {
-        auto existing = msg.getHeader(lastName).value_or("");
-        // Multimap means getHeader might not be enough if we want to append to the SPECIFIC last one,
-        // but for folded headers it's usually one line.
-        // Actually we can just update the last inserted header if we had access to it.
-        // Since we use multimap, we just replace the last value or append.
-        // Better: let's re-add with appended value.
-        auto it = msg.headers.find(lastName); // This might find any if multiple.
-        // For simplicity, let's just append to the value of the 'last' one found.
+        auto it = msg.headers.find(lastName);
         if (it != msg.headers.end()) {
-          it->second += " " + trim(line);
+          it->second += " ";
+          it->second += std::string(trim_sv(hLine));
         }
       }
       continue;
     }
 
-    auto colon = line.find(':');
-    if (colon != std::string::npos) {
-      std::string name = trim(line.substr(0, colon));
-      std::string value = trim(line.substr(colon + 1));
+    auto colon = hLine.find(':');
+    if (colon != std::string_view::npos) {
+      std::string name = std::string(trim_sv(hLine.substr(0, colon)));
+      std::string value = std::string(trim_sv(hLine.substr(colon + 1)));
       msg.addHeader(name, value);
       lastName = name;
       std::transform(lastName.begin(), lastName.end(), lastName.begin(), ::tolower);
@@ -128,10 +135,11 @@ std::optional<SipMessage> SipParser::parse(const char *buffer, size_t length) {
 
   // Body
   if (contentLength > 0) {
-    std::vector<char> bodyBuf(contentLength);
-    stream.read(bodyBuf.data(), contentLength);
-    msg.body.assign(bodyBuf.data(), stream.gcount());
+    size_t remaining = raw.length() - pos;
+    size_t toRead = std::min((size_t)contentLength, remaining);
+    msg.body.assign(raw.data() + pos, toRead);
   }
 
   return msg;
 }
+

@@ -14,9 +14,9 @@ public:
   int rtpPortStart;
   int rtpPortEnd;
   int maxCalls;
-  std::string grpcTarget;
+
   std::vector<std::string> codecPreference;
-  enum class GatewayMode { ECHO, GRPC, AUDIOSOCKET };
+  enum class GatewayMode { ECHO, AUDIOSOCKET };
   GatewayMode mode;
   std::string audiosocketTarget;
   bool recordingMode;

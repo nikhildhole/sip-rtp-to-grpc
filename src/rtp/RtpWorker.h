@@ -1,9 +1,10 @@
 #pragma once
 
 #include "RtpPacket.h"
+#include "RtcpPacket.h"
 #include <atomic>
 #include <functional>
-#include <map>
+#include <unordered_map>
 #include <mutex>
 #include <netinet/in.h>
 #include <thread>
@@ -12,6 +13,8 @@
 class RtpWorker {
 public:
   using PacketHandler = std::function<void(int localPort, const RtpPacket &,
+                                           const sockaddr_in &)>;
+  using RtcpHandler = std::function<void(int localPort, const RtcpPacket &,
                                            const sockaddr_in &)>;
 
   RtpWorker(int workerId, int startPort, int endPort);
@@ -26,6 +29,7 @@ public:
   void send(int localPort, const RtpPacket &packet, const sockaddr_in &dest);
 
   void setPacketHandler(PacketHandler handler);
+  void setRtcpHandler(RtcpHandler handler);
   
   int getStartPort() const { return startPort_; }
   int getEndPort() const { return endPort_; }
@@ -41,8 +45,11 @@ private:
   std::thread thread_;
 
   std::mutex mutex_;
-  std::map<int, int> activeSockets_; // port -> fd
+  std::vector<int> freePorts_;
+  std::unordered_map<int, int> activeSockets_; // port -> fd
   PacketHandler handler_;
+  RtcpHandler rtcpHandler_;
+  std::atomic<bool> handlersChanged_{true};
 
 #ifdef __linux__
   int epollFd_ = -1;

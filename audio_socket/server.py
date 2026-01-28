@@ -22,12 +22,29 @@ async def handle_client(reader, writer):
             # record only audio packets
             if msg_type == 0x01:
                 print("Received UUID: " + payload.decode('utf-8'))
+                
+                # For testing: Transfer the call after 5 seconds
+                async def trigger_transfer():
+                    await asyncio.sleep(5)
+                    transfer_target = "sip:1001@127.0.0.1"
+                    print(f"Triggering transfer to {transfer_target}...")
+                    payload_bytes = transfer_target.encode('utf-8')
+                    header = bytes([0x02, (len(payload_bytes) >> 8) & 0xFF, len(payload_bytes) & 0xFF])
+                    writer.write(header + payload_bytes)
+                    await writer.drain()
+                
+                asyncio.create_task(trigger_transfer())
+
+            if msg_type == 0x02:
+                print("Received Transfer Payload: " + payload.decode('utf-8'))
+
             if msg_type == 0x10:
                 wf.writeframes(payload)
 
             # echo back exactly
-            writer.write(header + payload)
-            await writer.drain()
+            if msg_type != 0x02:
+                writer.write(header + payload)
+                await writer.drain()
 
     except asyncio.IncompleteReadError:
         print("Client disconnected")

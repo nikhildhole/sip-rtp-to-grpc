@@ -7,6 +7,9 @@ AudioSocketStage::AudioSocketStage(std::shared_ptr<AudioSocketClient> client, in
     client_->setAudioCallback([this](const std::vector<char> &data) {
         this->onAudioSocketData(data);
     });
+    client_->setTransferCallback([this](const std::string &sipUrl) {
+        if (transferCb_) transferCb_(sipUrl);
+    });
 }
 
 void AudioSocketStage::onAudioSocketData(const std::vector<char> &data) {

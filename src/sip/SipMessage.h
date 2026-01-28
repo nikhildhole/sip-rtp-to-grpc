@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-enum class SipMethod { INVITE, ACK, BYE, CANCEL, OPTIONS, REFER, UNKNOWN };
+enum class SipMethod { INVITE, ACK, BYE, CANCEL, OPTIONS, REFER, REGISTER, UPDATE, UNKNOWN };
 
 class SipMessage {
 public:

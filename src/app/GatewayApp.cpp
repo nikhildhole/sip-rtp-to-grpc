@@ -11,6 +11,7 @@
 #include "SignalHandler.h"
 #include <csignal>
 #include <iostream>
+#include "../sip/states/IdleState.h"
 
 GatewayApp::GatewayApp() {}
 
@@ -59,9 +60,9 @@ void GatewayApp::run() {
   LOG_INFO("Gateway running. Press Ctrl+C to exit.");
 
   while (running_ && !SignalHandler::shouldExit()) {
-    sipServer_->poll();
+    sipServer_->poll(10); // Wait up to 10ms for SIP packets
     cleanupTransactions();
-    std::this_thread::sleep_for(std::chrono::milliseconds(10)); // Reduce CPU spin
+    // std::this_thread::sleep_for(std::chrono::milliseconds(10)); // Removed: poll provides pacing
   }
 
   running_ = false;
@@ -74,148 +75,119 @@ void GatewayApp::handleSipMessage(const SipMessage &msg,
   if (callId.empty())
     return;
 
+  // Global methods handling (Stateless)
+  if (msg.isRequest) {
+      if (msg.method == SipMethod::OPTIONS) {
+          auto res = SipResponseBuilder::createResponse(msg, 200, "OK");
+          sipServer_->sendResponse(res, sender);
+          return;
+      }
+      if (msg.method == SipMethod::REGISTER) {
+          // Simple REGISTER handling: Always accept
+          auto res = SipResponseBuilder::createResponse(msg, 200, "OK");
+          // Add Expires header?
+          res.addHeader("Expires", "3600");
+          sipServer_->sendResponse(res, sender);
+          LOG_INFO("Accepted REGISTER from " << msg.getFromUser());
+          return;
+      }
+  }
+
   std::string branch = msg.getBranch();
   std::string txKey = callId + ":" + branch + ":" + msg.methodStr;
 
-  auto session = CallRegistry::instance().getCall(callId);
-
   {
-    std::lock_guard<std::mutex> lock(transactionsMutex_);
-    if (msg.isRequest) {
-      auto txIt = transactions_.find(txKey);
-      if (txIt != transactions_.end()) {
-        if (txIt->second->shouldResendResponse(msg)) {
-          auto res = txIt->second->getLastResponse();
-          if (res) {
-            LOG_INFO("Resending retransmission for " << txKey);
-            sipServer_->sendResponse(*res, sender);
-            return;
+      std::lock_guard<std::mutex> lock(transactionsMutex_);
+      if (msg.isRequest) {
+          auto txIt = transactions_.find(txKey);
+          if (txIt != transactions_.end()) {
+              if (txIt->second->shouldResendResponse(msg)) {
+                  auto res = txIt->second->getLastResponse();
+                  if (res) {
+                      LOG_INFO("Resending retransmission for " << txKey);
+                      sipServer_->sendResponse(*res, sender);
+                      return;
+                  }
+              }
+              if (msg.method != SipMethod::ACK) return;
           }
-        }
-        if (msg.method != SipMethod::ACK) return;
-      }
-
-      auto transaction = std::make_shared<SipTransaction>(msg);
-      if (msg.method != SipMethod::ACK) {
-        transactions_[txKey] = transaction;
-      }
-
-      if (msg.method == SipMethod::INVITE) {
-        if (!session) {
-          if (CallRegistry::instance().count() >= Config::instance().maxCalls) {
-            auto res = SipResponseBuilder::createResponse(msg, 486, "Busy Here");
-            transaction->sendResponse(res);
-            sipServer_->sendResponse(res, sender);
-            return;
+          
+          auto transaction = std::make_shared<SipTransaction>(msg);
+          if (msg.method != SipMethod::ACK) {
+              transactions_[txKey] = transaction;
           }
-          session = std::make_shared<CallSession>(callId);
-          session->init(msg, sender);
-          CallRegistry::instance().addCall(callId, session);
-        }
+          // Note: ResponseSender in session needs to update transaction?
+          // For now, simpler: Transaction layer just deduplicates REQUESTS.
+          // Responses sent by Session are just sent.
+          // Ideally, Session should feed back the response to Transaction so it can cache it for retransmission.
+          // We can capture 'transaction' in the responseSender lambda?
+          
+          auto session = CallRegistry::instance().getCall(callId);
+          if (!session) {
+             if (msg.isRequest && msg.method == SipMethod::INVITE) {
+                  LOG_INFO("New Call: " << callId);
+                  session = std::make_shared<CallSession>(callId);
+                  
+                  // Capture weak_ptr to transaction to update it when response is sent
+                  std::weak_ptr<SipTransaction> weakTx = transaction;
+                  auto responseSender = [this, weakTx](const SipMessage& res, const sockaddr_in& addr) {
+                      this->sipServer_->sendResponse(res, addr);
+                      if (auto tx = weakTx.lock()) {
+                          tx->sendResponse(res); // Cache it
+                      }
+                  };
 
-        auto tryingRes = SipResponseBuilder::createResponse(msg, 100, "Trying");
-        transaction->sendResponse(tryingRes);
-        sipServer_->sendResponse(tryingRes, sender);
-
-        auto sdpOpt = SdpParser::parse(msg.body);
-        if (!sdpOpt) {
-          auto badRes = SipResponseBuilder::createResponse(msg, 400, "Bad Request (No SDP)");
-          transaction->sendResponse(badRes);
-          sipServer_->sendResponse(badRes, sender);
-          CallRegistry::instance().removeCall(callId);
-          return;
-        }
-
-        NegotiatedCodec codec;
-        int localRtpPort = RtpServer::instance().allocatePort();
-        if (localRtpPort < 0) {
-          auto errRes = SipResponseBuilder::createResponse(msg, 500, "Internal Server Error (No Ports)");
-          transaction->sendResponse(errRes);
-          sipServer_->sendResponse(errRes, sender);
-          CallRegistry::instance().removeCall(callId);
-          return;
-        }
-
-        CallRegistry::instance().registerRtpPort(localRtpPort, callId);
-        LOG_DEBUG("Allocated RTP port " << localRtpPort << " for call " << callId);
-
-        std::string sdpAnswer = SdpAnswer::generate(
-            *sdpOpt, Config::instance().bindIp, localRtpPort,
-            Config::instance().codecPreference, codec);
-
-        if (sdpAnswer.empty()) {
-          auto errRes = SipResponseBuilder::createResponse(msg, 488, "Not Acceptable Here");
-          transaction->sendResponse(errRes);
-          sipServer_->sendResponse(errRes, sender);
-          RtpServer::instance().releasePort(localRtpPort);
-          CallRegistry::instance().removeCall(callId);
-          return;
-        }
-
-        std::string remoteIp = sdpOpt->connectionIp;
-        int remotePort = 0;
-        for (auto &m : sdpOpt->media)
-          if (m.type == "audio")
-            remotePort = m.port;
-
-        session->startPipeline(localRtpPort, remoteIp, remotePort,
-                               codec.payloadType);
-
-        auto res = SipResponseBuilder::createResponse(msg, 200, "OK");
-        res.addHeader("Content-Type", "application/sdp");
-        res.addHeader("Contact", "<sip:" + Config::instance().bindIp + ":" +
-                                     std::to_string(Config::instance().sipPort) +
-                                     ">");
-        res.body = sdpAnswer;
-        transaction->sendResponse(res);
-        sipServer_->sendResponse(res, sender);
-
-      } else if (msg.method == SipMethod::BYE) {
-        auto res = SipResponseBuilder::createResponse(msg, 200, "OK");
-        transaction->sendResponse(res);
-        sipServer_->sendResponse(res, sender);
-        if (session) {
-          session->onSipMessage(msg, sender);
-          CallRegistry::instance().removeCall(callId);
-        }
-      } else if (msg.method == SipMethod::CANCEL) {
-        auto res = SipResponseBuilder::createResponse(msg, 200, "OK");
-        transaction->sendResponse(res);
-        sipServer_->sendResponse(res, sender);
-        if (session) {
-          CallRegistry::instance().removeCall(callId);
-        }
-      } else if (msg.method == SipMethod::ACK) {
-        std::string inviteTxKey = callId + ":" + branch + ":INVITE";
-        auto it = transactions_.find(inviteTxKey);
+                  session->init(msg, sender, responseSender);
+                  session->setState(std::make_shared<IdleState>());
+                  CallRegistry::instance().addCall(callId, session);
+                  session->onSipMessage(msg, sender);
+             } else if (msg.method != SipMethod::ACK) {
+                 // 481
+                  auto res = SipResponseBuilder::createResponse(msg, 481, "Call/Transaction Does Not Exist");
+                  sipServer_->sendResponse(res, sender);
+             }
+          } else {
+              // Existing session
+               // We need to make sure the session uses THIS transaction for THIS message.
+               // But session has a generic 'responseSender'.
+               // If we just call onSipMessage, it uses the stored sender (from INIT).
+               // That stored sender is bound to the INITIAL INVITE transaction.
+               // THIS IS A PROBLEM.
+               // Subsequent requests (RE-INVITE, BYE) have NEW transactions.
+               // SOLUTION: Pass response sender to onSipMessage!
+               
+               std::weak_ptr<SipTransaction> weakTx = transaction;
+               auto scopedSender = [this, weakTx](const SipMessage& res, const sockaddr_in& addr) {
+                   this->sipServer_->sendResponse(res, addr);
+                   if (auto tx = weakTx.lock()) {
+                       tx->sendResponse(res);
+                   }
+               };
+               
+               // But CallSession::onSipMessage doesn't take sender.
+               // It uses stored `responseSender_`.
+               // We should update `responseSender_` or pass it.
+               // Passing it is cleaner for state machine.
+               // BUT CallSession interface is `onSipMessage(msg, sender)`.
+               // We can add `onSipMessage(msg, sender, responseCallback)`.
+               
+               // Hack for now: Update the specific transaction for the session? 
+               // Or simpler: Session sends response, GatewayApp sniffs it? No.
+               
+               // Let's modify CallSession::onSipMessage to take an optional sender or just update it?
+               // Update setResponseSender?
+               session->setResponseSender(scopedSender);
+               session->onSipMessage(msg, sender);
+          }
+      } else {
+        // Response handling
+        std::string resBranch = msg.getBranch();
+        std::string resTxKey = callId + ":" + resBranch + ":" + msg.methodStr;
+        auto it = transactions_.find(resTxKey);
         if (it != transactions_.end()) {
-            it->second->receiveRequest(msg);
+            it->second->receiveResponse(msg);
         }
-      } else if (msg.method == SipMethod::REFER) {
-        auto res = SipResponseBuilder::createResponse(msg, 202, "Accepted");
-        transaction->sendResponse(res);
-        sipServer_->sendResponse(res, sender);
-        LOG_INFO("Received REFER, blind transfer support minimal.");
-      } else if (msg.method == SipMethod::OPTIONS) {
-        auto res = SipResponseBuilder::createResponse(msg, 200, "OK");
-        transaction->sendResponse(res);
-        sipServer_->sendResponse(res, sender);
-      } else {
-        auto res = SipResponseBuilder::createResponse(msg, 501, "Not Implemented");
-        transaction->sendResponse(res);
-        sipServer_->sendResponse(res, sender);
       }
-    } else {
-      std::string resBranch = msg.getBranch();
-      std::string resTxKey = callId + ":" + resBranch + ":" + msg.methodStr;
-      auto it = transactions_.find(resTxKey);
-      if (it != transactions_.end()) {
-        LOG_DEBUG("Received response " << msg.statusCode << " for transaction " << resTxKey);
-        it->second->receiveResponse(msg);
-      } else {
-        LOG_WARN("Received response for unknown transaction: " << resTxKey);
-      }
-    }
   }
 }
 

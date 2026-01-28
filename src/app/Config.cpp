@@ -16,7 +16,7 @@ bool Config::load(const std::string &path) {
     rtpPortStart = config["rtp_port_start"].as<int>(20000);
     rtpPortEnd = config["rtp_port_end"].as<int>(30000);
     maxCalls = config["max_calls"].as<int>(200);
-    grpcTarget = config["grpc_target"].as<std::string>("127.0.0.1:50051");
+
 
     if (config["codec_preference"]) {
       codecPreference =
@@ -25,9 +25,7 @@ bool Config::load(const std::string &path) {
 
 
     std::string modeStr = config["mode"].as<std::string>("echo");
-    if (modeStr == "grpc") {
-      mode = GatewayMode::GRPC;
-    } else if (modeStr == "audiosocket" || modeStr == "tcp") {
+    if (modeStr == "audiosocket" || modeStr == "tcp") {
       mode = GatewayMode::AUDIOSOCKET;
     } else {
       mode = GatewayMode::ECHO;

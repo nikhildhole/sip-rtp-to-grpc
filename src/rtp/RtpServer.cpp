@@ -77,6 +77,12 @@ void RtpServer::setPacketHandler(PacketHandler handler) {
   }
 }
 
+void RtpServer::setRtcpHandler(RtcpHandler handler) {
+  for (auto &w : workers_) {
+    w->setRtcpHandler(handler);
+  }
+}
+
 void RtpServer::send(int localPort, const RtpPacket &pkt,
                      const sockaddr_in &dest) {
    for (auto &w : workers_) {

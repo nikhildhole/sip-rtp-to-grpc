@@ -20,7 +20,7 @@ public:
 
   bool start();
   void setRequestHandler(RequestHandler handler);
-  void poll(); // Called from main loop
+  void poll(int timeoutMs = 0); // Called from main loop
 
   void sendResponse(const SipMessage &res, const sockaddr_in &dest);
   void sendRequest(const SipMessage &req, const sockaddr_in &dest);

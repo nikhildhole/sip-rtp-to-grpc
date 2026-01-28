@@ -11,6 +11,8 @@ class RtpServer {
 public:
   using PacketHandler = std::function<void(int localPort, const RtpPacket &,
                                            const sockaddr_in &)>;
+  using RtcpHandler = std::function<void(int localPort, const RtcpPacket &,
+                                           const sockaddr_in &)>;
 
   static RtpServer &instance();
 
@@ -23,6 +25,7 @@ public:
 
   // Set callback (propagated to all workers)
   void setPacketHandler(PacketHandler handler);
+  void setRtcpHandler(RtcpHandler handler);
 
   // Send (Delegates to appropriate worker)
   void send(int localPort, const RtpPacket &packet, const sockaddr_in &dest);

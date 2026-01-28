@@ -3,6 +3,7 @@
 #include "../util/Net.h"
 #include <cstring>
 #include <sys/socket.h>
+#include <poll.h>
 
 SipServer::SipServer(int port) : port_(port) {}
 
@@ -26,41 +27,55 @@ void SipServer::setRequestHandler(RequestHandler handler) {
   requestHandler_ = handler;
 }
 
-void SipServer::poll() {
-  while (true) {
-    sockaddr_in senderAddr{};
-    socklen_t addrLen = sizeof(senderAddr);
+void SipServer::poll(int timeoutMs) {
+  struct pollfd pfd;
+  pfd.fd = socketFd_;
+  pfd.events = POLLIN;
 
-    ssize_t n = recvfrom(socketFd_, buffer_, sizeof(buffer_) - 1, 0,
-                         (struct sockaddr *)&senderAddr, &addrLen);
-    if (n > 0) {
-      buffer_[n] = '\0';
-      LOG_INFO("Received UDP packet from "
-                << Net::ipFromSockAddr(senderAddr) << ":"
-                << Net::portFromSockAddr(senderAddr));
-      
-      std::string debugMsg(buffer_, std::min<size_t>(n, 256));
-      LOG_DEBUG("SIP Packet (truncated): " << debugMsg);
-
-      auto msg = SipParser::parse(buffer_, n);
-      if (msg) {
-        if (requestHandler_) {
-          requestHandler_(*msg, senderAddr);
+  int ret = ::poll(&pfd, 1, timeoutMs);
+  if (ret > 0 && (pfd.revents & POLLIN)) {
+    while (true) { // Drain all available packets
+        sockaddr_in senderAddr{};
+        socklen_t addrLen = sizeof(senderAddr);
+    
+        ssize_t n = recvfrom(socketFd_, buffer_, sizeof(buffer_) - 1, 0,
+                             (struct sockaddr *)&senderAddr, &addrLen);
+        if (n > 0) {
+          buffer_[n] = '\0';
+          LOG_INFO("Received UDP packet from "
+                    << Net::ipFromSockAddr(senderAddr) << ":"
+                    << Net::portFromSockAddr(senderAddr));
+          
+          std::string debugMsg(buffer_, std::min<size_t>(n, 256));
+          LOG_DEBUG("SIP Packet (truncated): " << debugMsg);
+    
+          auto msg = SipParser::parse(buffer_, n);
+          if (msg) {
+            if (requestHandler_) {
+              requestHandler_(*msg, senderAddr);
+            }
+          } else {
+            LOG_WARN("Failed to parse SIP message");
+          }
+        } else if (n < 0) {
+          if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            break; // Normal for non-blocking
+          } else {
+            LOG_ERROR("SIP recvfrom error: " << strerror(errno));
+            break;
+          }
+        } else {
+          // n == 0 for UDP means empty datagram
+          break;
         }
-      } else {
-        LOG_WARN("Failed to parse SIP message");
-      }
-    } else if (n < 0) {
-      if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        break; // Normal for non-blocking
-      } else {
-        LOG_ERROR("SIP recvfrom error: " << strerror(errno));
-        break;
-      }
-    } else {
-      // n == 0 for UDP means empty datagram
-      break;
+        
+        // If we processed a packet, check if there are more immediately
+        // Note: recvfrom on non-blocking socket returns EAGAIN if empty, so the loop handles it.
     }
+  } else if (ret < 0) {
+      if (errno != EINTR) { 
+          LOG_ERROR("SIP poll error: " << strerror(errno));
+      }
   }
 }
 
