@@ -1,0 +1,43 @@
+# SIP/RTP Bridge Test Framework Automation
+
+SUT_IP=172.20.0.10
+SIP_PORT=5060
+TCP_RECEIVER_PORT=9000
+
+.PHONY: setup up down run-uac-load run-reg-load jitter-50ms loss-5pc clear-impairments report clean
+
+setup:
+	docker-compose -f tests/docker-compose.test.yaml build
+
+up:
+	docker-compose -f tests/docker-compose.test.yaml up -d
+
+down:
+	docker-compose -f tests/docker-compose.test.yaml down
+
+# Run 100 concurrent calls with RTP streaming (10 calls/sec ramp-up)
+run-uac-load:
+	docker exec sipp_tester sipp $(SUT_IP):$(SIP_PORT) -sf /tests/sipp/uac_pcma.xml -c 100 -r 10 -m 1000 -mi 172.20.0.20
+
+# Run 500 registrations to test SIP stack limits
+run-reg-load:
+	docker exec sipp_tester sipp $(SUT_IP):$(SIP_PORT) -sf /tests/sipp/register.xml -c 100 -r 50 -m 500
+
+# Network Impairments
+jitter-100ms:
+	./tests/apply_impairments.sh jitter 100
+
+loss-10pc:
+	./tests/apply_impairments.sh loss 10
+
+clear-impairments:
+	./tests/apply_impairments.sh clear
+
+# Metrics and Reporting
+report:
+	@echo "Last 5 metrics entries from TCP Receiver:"
+	@tail -n 20 tests/test_metrics.json || echo "No metrics found yet."
+
+clean:
+	rm -f tests/test_metrics.json
+	docker-compose -f tests/docker-compose.test.yaml down -v

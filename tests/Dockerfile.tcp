@@ -1,0 +1,5 @@
+FROM python:3.9-slim
+WORKDIR /app
+COPY tcp_receiver.py .
+EXPOSE 9000
+CMD ["python", "tcp_receiver.py"]

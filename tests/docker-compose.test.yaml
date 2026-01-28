@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  sut:
+    build: 
+      context: ..
+      dockerfile: Dockerfile # Assuming there is a Dockerfile in the root
+    container_name: gateway_sut
+    deploy:
+      resources:
+        limits:
+          cpus: '3.0'
+    ports:
+      - "5060:5060/udp"
+      - "20000-20100:20000-20100/udp"
+    volumes:
+      - ../config:/app/config
+    networks:
+      test-net:
+        ipv4_address: 172.20.0.10
+
+  tester-sip:
+    image: ctubio/sipp
+    container_name: sipp_tester
+    volumes:
+      - ./sipp:/tests/sipp
+    entrypoint: ["tail", "-f", "/dev/null"] # Keep alive for manual execution or scripts
+    networks:
+      test-net:
+        ipv4_address: 172.20.0.20
+
+  tester-tcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.tcp
+    container_name: tcp_receiver
+    ports:
+      - "9000:9000"
+    networks:
+      test-net:
+        ipv4_address: 172.20.0.30
+
+networks:
+  test-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
