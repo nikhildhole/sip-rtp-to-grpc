@@ -1,4 +1,3 @@
-bind_ip: "127.0.0.1"  # Change this line
 sip_port: 5060
 rtp_port_start: 20000
 rtp_port_end: 30000

@@ -46,7 +46,7 @@ void IdleState::handleInvite(CallSession& session, const SipMessage& msg, const 
     // 5. Generate SDP Answer
     NegotiatedCodec codec;
     std::string sdpAnswer = SdpAnswer::generate(
-        *sdpOpt, config.bindIp, session.getLocalPort(),
+        *sdpOpt, config.getEffectiveBindIp(), session.getLocalPort(),
         config.codecPreference, codec);
 
     if (sdpAnswer.empty()) {
@@ -63,14 +63,22 @@ void IdleState::handleInvite(CallSession& session, const SipMessage& msg, const 
         if (m.type == "audio")
             remotePort = m.port;
 
-    session.startPipeline(session.getLocalPort(), remoteIp, remotePort, codec.payloadType);
+    if (!session.startPipeline(session.getLocalPort(), remoteIp, remotePort, codec.payloadType)) {
+        LOG_ERROR("Failed to start media pipeline for " << msg.getCallId());
+        session.sendResponse(SipResponseBuilder::createResponse(msg, SipConstants::SERVICE_UNAVAILABLE, "Service Unavailable (Backend Connection Failed)"), sender);
+        session.setState(std::make_shared<TerminatedState>());
+        return;
+    }
 
     // 7. Send 200 OK
     auto res = SipResponseBuilder::createResponse(msg, SipConstants::OK, "OK");
     res.addHeader("Content-Type", "application/sdp");
-    res.addHeader("Contact", "<sip:" + config.bindIp + ":" + std::to_string(config.sipPort) + ">");
-    res.body = sdpAnswer; // TODO: Add Supported: timer if implementing timers
+    res.addHeader("Contact", "<sip:" + config.getEffectiveBindIp() + ":" + std::to_string(config.sipPort) + ">");
+    res.body = sdpAnswer; 
     
+    // Initialize dialog before sending response so it's ready
+    session.setDialog(std::make_shared<SipDialog>(msg, res.getToTag()));
+
     session.sendResponse(res, sender);
 
     // 8. Transition to Active

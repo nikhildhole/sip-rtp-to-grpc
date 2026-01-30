@@ -17,6 +17,7 @@ namespace SipConstants {
     constexpr int REQUEST_PENDING = 491;
     constexpr int INTERNAL_SERVER_ERROR = 500;
     constexpr int NOT_IMPLEMENTED = 501;
+    constexpr int SERVICE_UNAVAILABLE = 503;
     constexpr int DECLINE = 603;
 
     // Headers

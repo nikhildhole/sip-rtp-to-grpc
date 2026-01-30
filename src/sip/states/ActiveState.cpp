@@ -60,7 +60,7 @@ void ActiveState::handleInvite(CallSession& session, const SipMessage& msg, cons
     // 5. Send 200 OK
     auto res = SipResponseBuilder::createResponse(msg, SipConstants::OK, "OK");
     res.addHeader("Content-Type", "application/sdp");
-    res.addHeader("Contact", "<sip:" + Config::instance().bindIp + ":" + std::to_string(Config::instance().sipPort) + ">");
+    res.addHeader("Contact", "<sip:" + Config::instance().getEffectiveBindIp() + ":" + std::to_string(Config::instance().sipPort) + ">");
     res.body = sdpAnswer;
     session.sendResponse(res, sender);
 }

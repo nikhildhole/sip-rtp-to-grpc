@@ -27,6 +27,10 @@ SipMethod SipParser::parseMethod(std::string_view sv) {
     return SipMethod::OPTIONS;
   if (sv == "REFER")
     return SipMethod::REFER;
+  if (sv == "REGISTER")
+    return SipMethod::REGISTER;
+  if (sv == "UPDATE")
+    return SipMethod::UPDATE;
   return SipMethod::UNKNOWN;
 }
 

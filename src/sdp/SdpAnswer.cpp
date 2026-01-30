@@ -50,12 +50,17 @@ codec_found:
     return "";
   }
 
+  std::string connIp = localIp;
+  if (connIp == "0.0.0.0") {
+      connIp = "127.0.0.1";
+  }
+
   // Construct Answer
   std::ostringstream oss;
   oss << "v=0\r\n";
-  oss << "o=- 123456 123456 IN IP4 " << localIp << "\r\n";
+  oss << "o=- 123456 123456 IN IP4 " << connIp << "\r\n";
   oss << "s=Gateway\r\n";
-  oss << "c=IN IP4 " << localIp << "\r\n";
+  oss << "c=IN IP4 " << connIp << "\r\n";
   oss << "t=0 0\r\n";
 
   oss << "m=audio " << localPort << " RTP/AVP " << outCodec.payloadType << "\r\n";

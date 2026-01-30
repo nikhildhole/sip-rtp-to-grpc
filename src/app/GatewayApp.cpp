@@ -16,8 +16,12 @@
 GatewayApp::GatewayApp() {}
 
 GatewayApp::~GatewayApp() {
-  if (cliThread_.joinable())
-    cliThread_.join();
+  running_ = false;
+  // If the CLI thread is stuck in std::getline, we can't join it easily without it blocking us.
+  // We'll detach it to allow the main thread (and thus the process) to exit.
+  if (cliThread_.joinable()) {
+      cliThread_.detach();
+  }
 }
 
 bool GatewayApp::init(const std::string &configPath) {
@@ -66,7 +70,17 @@ void GatewayApp::run() {
   }
 
   running_ = false;
-  LOG_INFO("Shutting down...");
+  LOG_INFO("Shutting down... Cleaning up active calls.");
+  
+  // Terminate all sessions
+  auto callIds = CallRegistry::instance().getAllCallIds();
+  for (const auto& id : callIds) {
+      auto session = CallRegistry::instance().getCall(id);
+      if (session) {
+          LOG_INFO("Terminating call " << id << " during shutdown");
+          session->terminate();
+      }
+  }
 }
 
 void GatewayApp::handleSipMessage(const SipMessage &msg,
@@ -228,17 +242,21 @@ void GatewayApp::handleRtpPacket(int localPort, const RtpPacket &pkt,
 
 void GatewayApp::cliLoop() {
   std::string line;
+  // We use running_ to check if we should keep reading, but std::getline is blocking.
   while (running_ && std::getline(std::cin, line)) {
+    if (!running_) break;
     if (line == "list") {
       LOG_INFO("Active Calls: " << CallRegistry::instance().count());
-      // TODO: List IDs
     } else if (line.find("cut ") == 0) {
       std::string id = line.substr(4);
       CallRegistry::instance().removeCall(id);
       LOG_INFO("Cut call " << id);
     } else if (line == "exit" || line == "quit") {
       SignalHandler::setExit();
-      std::raise(SIGINT);
+      // Only break if we are sure we want to stop this thread's loop.
+      // SignalHandler::setExit() will also make the main loop exit.
+      break;
     }
   }
+  LOG_DEBUG("CLI Loop exiting");
 }

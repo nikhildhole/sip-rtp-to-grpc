@@ -15,7 +15,7 @@ bool Config::load(const std::string &path) {
     sipPort = config["sip_port"].as<int>(5060);
     rtpPortStart = config["rtp_port_start"].as<int>(20000);
     rtpPortEnd = config["rtp_port_end"].as<int>(30000);
-    maxCalls = config["max_calls"].as<int>(200);
+    maxCalls = config["max_calls"].as<size_t>(200);
 
 
     if (config["codec_preference"]) {

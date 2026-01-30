@@ -57,3 +57,12 @@ size_t CallRegistry::count() {
   std::lock_guard<std::mutex> lock(mutex_);
   return calls_.size();
 }
+
+std::vector<std::string> CallRegistry::getAllCallIds() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  std::vector<std::string> ids;
+  for (const auto &pair : calls_) {
+    ids.push_back(pair.first);
+  }
+  return ids;
+}

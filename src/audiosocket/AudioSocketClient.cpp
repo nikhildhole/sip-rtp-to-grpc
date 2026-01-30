@@ -28,17 +28,32 @@ AudioSocketClient::~AudioSocketClient() {
 
 bool AudioSocketClient::connect() {
     size_t colonPos = target_.find(':');
-    if (colonPos == std::string::npos) return false;
+    if (colonPos == std::string::npos) {
+        LOG_ERROR("Invalid AudioSocket target (missing colon): " << target_);
+        return false;
+    }
 
     std::string ip = target_.substr(0, colonPos);
-    int port = std::stoi(target_.substr(colonPos + 1));
+    int port;
+    try {
+        port = std::stoi(target_.substr(colonPos + 1));
+    } catch (...) {
+        LOG_ERROR("Invalid AudioSocket port in target: " << target_);
+        return false;
+    }
+
+    LOG_DEBUG("Connecting to AudioSocket at " << ip << ":" << port << " for call " << callId_);
 
     sockfd_ = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd_ < 0) return false;
+    if (sockfd_ < 0) {
+        LOG_ERROR("Failed to create socket: " << strerror(errno));
+        return false;
+    }
 
     // Set non-blocking
     int flags = fcntl(sockfd_, F_GETFL, 0);
     if (flags < 0 || fcntl(sockfd_, F_SETFL, flags | O_NONBLOCK) < 0) {
+        LOG_ERROR("Failed to set non-blocking: " << strerror(errno));
         close(sockfd_);
         sockfd_ = -1;
         return false;
@@ -48,12 +63,18 @@ bool AudioSocketClient::connect() {
     memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(port);
-    inet_pton(AF_INET, ip.c_str(), &serv_addr.sin_addr);
+    if (inet_pton(AF_INET, ip.c_str(), &serv_addr.sin_addr) <= 0) {
+        LOG_ERROR("Invalid IP address for AudioSocket: " << ip);
+        close(sockfd_);
+        sockfd_ = -1;
+        return false;
+    }
 
     // Initial connect attempt
     int ret = ::connect(sockfd_, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
     if (ret < 0) {
         if (errno != EINPROGRESS) {
+            LOG_ERROR("Connect (sync) failed to " << ip << ":" << port << ": " << strerror(errno));
             close(sockfd_);
             sockfd_ = -1;
             return false;
@@ -65,13 +86,21 @@ bool AudioSocketClient::connect() {
         pfd.events = POLLOUT;
         
         int pollRet = poll(&pfd, 1, 3000); // 3 second timeout
-        if (pollRet <= 0) { // Timeout or error
+        if (pollRet == 0) {
+            LOG_ERROR("Connection timeout (3s) to " << ip << ":" << port);
+            close(sockfd_);
+            sockfd_ = -1;
+            return false;
+        }
+        if (pollRet < 0) {
+            LOG_ERROR("Poll error during connect: " << strerror(errno));
             close(sockfd_);
             sockfd_ = -1;
             return false; 
         }
 
         if (pfd.revents & (POLLERR | POLLHUP)) {
+            LOG_ERROR("Socket error event during poll: " << pfd.revents);
             close(sockfd_);
             sockfd_ = -1;
             return false;
@@ -80,7 +109,14 @@ bool AudioSocketClient::connect() {
         // Verify connection success
         int error = 0;
         socklen_t len = sizeof(error);
-        if (getsockopt(sockfd_, SOL_SOCKET, SO_ERROR, &error, &len) < 0 || error != 0) {
+        if (getsockopt(sockfd_, SOL_SOCKET, SO_ERROR, &error, &len) < 0) {
+            LOG_ERROR("getsockopt failed: " << strerror(errno));
+            close(sockfd_);
+            sockfd_ = -1;
+            return false;
+        }
+        if (error != 0) {
+            LOG_ERROR("Async connect failed to " << ip << ":" << port << ": " << strerror(error));
             close(sockfd_);
             sockfd_ = -1;
             return false;
@@ -104,10 +140,9 @@ void AudioSocketClient::stop() {
     if (!running_.exchange(false)) return;
 
     if (sockfd_ >= 0) {
-        // Send terminate packet
+        // Send terminate packet with a small timeout (50ms) to avoid hanging if the socket is stuck
         unsigned char terminate[3] = {TYPE_TERM, 0, 0};
-        // Best effort send, don't wait too long
-        sendAll((char*)terminate, 3);
+        sendAll((char*)terminate, 3, 50);
         
         shutdown(sockfd_, SHUT_RDWR);
         close(sockfd_);
@@ -115,7 +150,13 @@ void AudioSocketClient::stop() {
     }
 
     if (readerThread_.joinable()) {
-        readerThread_.join();
+        if (std::this_thread::get_id() != readerThread_.get_id()) {
+            LOG_DEBUG("Joining reader thread for call " << callId_);
+            readerThread_.join();
+        } else {
+            LOG_DEBUG("stop() called from reader thread, detaching to avoid deadlock for call " << callId_);
+            readerThread_.detach();
+        }
     }
 }
 
@@ -183,7 +224,10 @@ void AudioSocketClient::sendAudio(const std::vector<char>& pcmData) {
     // Optimized sending: use writev to send header and data in one go
     ssize_t n = writev(sockfd_, iov, 2);
     if (n < 0) {
-        if (errno != EAGAIN && errno != EWOULDBLOCK) return;
+        if (errno != EAGAIN && errno != EWOULDBLOCK) {
+            LOG_ERROR("writev failed for call " << callId_ << ": " << strerror(errno));
+            return;
+        }
         n = 0;
     }
     
@@ -195,37 +239,58 @@ void AudioSocketClient::sendAudio(const std::vector<char>& pcmData) {
         // Did not finish header
         if (sendAll((const char*)header + written, 3 - written)) {
             sendAll(pcmData.data(), len);
+        } else {
+            LOG_ERROR("Send header failed for call " << callId_ << ", stopping client");
+            stop();
         }
     } else {
         // Finished header, send remaining body
         size_t bodyWritten = written - 3;
         if (bodyWritten < len) {
-            sendAll(pcmData.data() + bodyWritten, len - bodyWritten);
+            if (!sendAll(pcmData.data() + bodyWritten, len - bodyWritten)) {
+                LOG_ERROR("Send body failed for call " << callId_ << ", stopping client");
+                stop();
+            }
         }
     }
 }
 
-bool AudioSocketClient::sendAll(const char* data, size_t len) {
+bool AudioSocketClient::sendAll(const char* data, size_t len, int timeoutMs) {
     if (sockfd_ < 0) return false;
     
+    auto startTime = std::chrono::steady_clock::now();
     size_t sent = 0;
-    while (sent < len) {
+    while (sent < len && (running_ || timeoutMs > 0)) {
         // We are non-blocking now, so we need to handle EAGAIN
         ssize_t n = send(sockfd_, data + sent, len - sent, 0);
         if (n < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                if (timeoutMs > 0) {
+                    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - startTime).count();
+                    if (elapsed >= timeoutMs) {
+                        LOG_WARN("sendAll timed out after " << timeoutMs << "ms for call " << callId_);
+                        return false;
+                    }
+                }
+
                 // Wait for writeability
                 struct pollfd pfd;
                 pfd.fd = sockfd_;
                 pfd.events = POLLOUT;
-                poll(&pfd, 1, 100); // 100ms timeout
+                int ret = poll(&pfd, 1, 10); // 10ms timeout
+                if (ret < 0 && errno != EINTR) {
+                    LOG_ERROR("Poll for sendAll failed for call " << callId_ << ": " << strerror(errno));
+                    return false;
+                }
                 continue;
             }
+            LOG_ERROR("Send failed for call " << callId_ << ": " << strerror(errno));
             return false;
         }
         sent += n;
     }
-    return true;
+    return sent == len;
 }
 
 void AudioSocketClient::readerLoop() {
@@ -238,13 +303,17 @@ void AudioSocketClient::readerLoop() {
         
         int ret = poll(&pfd, 1, TIMEOUT_MS);
         if (ret < 0) {
-            LOG_ERROR("Poll error in reader loop");
+            if (errno == EINTR) {
+                LOG_DEBUG("Poll interrupted for call " << callId_);
+                continue;
+            }
+            LOG_ERROR("Poll error in reader loop for call " << callId_ << ": " << strerror(errno));
             break;
         }
         if (ret == 0) continue; // Timeout
 
         if (pfd.revents & (POLLERR | POLLHUP)) {
-            LOG_INFO("AudioSocket disconnected");
+            LOG_INFO("AudioSocket disconnected (revents: " << pfd.revents << ") for call " << callId_);
             break;
         }
 
@@ -257,11 +326,25 @@ void AudioSocketClient::readerLoop() {
             while (received < 3) {
                  ssize_t n = recv(sockfd_, header + received, 3 - received, 0);
                  if (n > 0) received += n;
-                 else if (n == 0) { error = true; break; } // EOF
-                 else if (errno != EAGAIN && errno != EWOULDBLOCK) { error = true; break; }
+                 else if (n == 0) { 
+                     LOG_INFO("AudioSocket remote closed connection during header read for call " << callId_);
+                     error = true; break; 
+                 }
+                 else if (errno != EAGAIN && errno != EWOULDBLOCK) { 
+                     LOG_ERROR("Error reading header for call " << callId_ << ": " << strerror(errno));
+                     error = true; break; 
+                 }
                  else {
                      // Wait more
-                     poll(&pfd, 1, 100);
+                     int poll_ret = poll(&pfd, 1, 100);
+                     if (poll_ret < 0 && errno != EINTR) {
+                         LOG_ERROR("Poll error during header read for call " << callId_ << ": " << strerror(errno));
+                         error = true; break;
+                     }
+                     if (poll_ret == 0) {
+                         LOG_WARN("Poll timeout during header read for call " << callId_);
+                         // Consider this a transient issue, continue trying to read
+                     }
                  }
             }
             
@@ -276,9 +359,24 @@ void AudioSocketClient::readerLoop() {
                 while (pReceived < len) {
                      ssize_t n = recv(sockfd_, payload.data() + pReceived, len - pReceived, 0);
                      if (n > 0) pReceived += n;
-                     else if (n == 0) { error = true; break; }
-                     else if (errno != EAGAIN && errno != EWOULDBLOCK) { error = true; break; }
-                     else { poll(&pfd, 1, 100); }
+                     else if (n == 0) { 
+                         LOG_INFO("AudioSocket remote closed connection during payload read for call " << callId_);
+                         error = true; break; 
+                     }
+                     else if (errno != EAGAIN && errno != EWOULDBLOCK) { 
+                         LOG_ERROR("Error reading payload for call " << callId_ << ": " << strerror(errno));
+                         error = true; break; 
+                     }
+                     else { 
+                         int poll_ret = poll(&pfd, 1, 100);
+                         if (poll_ret < 0 && errno != EINTR) {
+                             LOG_ERROR("Poll error during payload read for call " << callId_ << ": " << strerror(errno));
+                             error = true; break;
+                         }
+                         if (poll_ret == 0) {
+                             LOG_WARN("Poll timeout during payload read for call " << callId_);
+                         }
+                     }
                 }
                 
                 if (error) break;
@@ -299,6 +397,13 @@ void AudioSocketClient::readerLoop() {
             }
         }
     }
+    bool unexpected = running_;
     running_ = false;
-    LOG_INFO("AudioSocket reader loop stopped for call " << callId_);
+    LOG_INFO("AudioSocket reader loop stopped for call " << callId_ << " (unexpected: " << (unexpected ? "yes" : "no") << ")");
+    
+    // Trigger disconnect callback if it was an unexpected closure
+    if (unexpected && disconnectCb_) {
+        LOG_DEBUG("Triggering disconnect callback for call " << callId_);
+        disconnectCb_();
+    }
 }

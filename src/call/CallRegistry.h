@@ -19,6 +19,7 @@ public:
   void registerRtpPort(int port, const std::string &callId);
 
   size_t count();
+  std::vector<std::string> getAllCallIds();
 
 private:
   std::map<std::string, std::shared_ptr<CallSession>> calls_;

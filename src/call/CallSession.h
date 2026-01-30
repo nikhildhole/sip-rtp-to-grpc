@@ -36,6 +36,9 @@ public:
   // State Management
   void setState(std::shared_ptr<CallState> state);
   std::shared_ptr<CallState> getState() const { return currentState_; }
+  
+  std::shared_ptr<SipDialog> getDialog() const { return dialog_; }
+  void setDialog(std::shared_ptr<SipDialog> dialog) { dialog_ = dialog; }
 
   // Actions for States
   void sendResponse(const SipMessage& req, int code, const std::string& reason);
@@ -61,7 +64,7 @@ public:
   void sendRefer(const std::string& referTo);
 
   // Pipeline access
-  void startPipeline(int localRtpPort, const std::string &remoteIp,
+  bool startPipeline(int localRtpPort, const std::string &remoteIp,
                      int remotePort, int payloadType);
 
 private:

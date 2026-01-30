@@ -41,6 +41,9 @@ void SipServer::poll(int timeoutMs) {
         ssize_t n = recvfrom(socketFd_, buffer_, sizeof(buffer_) - 1, 0,
                              (struct sockaddr *)&senderAddr, &addrLen);
         if (n > 0) {
+          if (n < 32 && (buffer_[0] == '\r' || buffer_[0] == '\n' || buffer_[0] == ' ')) {
+              continue; // Silence keep-alives or stray empty packets
+          }
           buffer_[n] = '\0';
           LOG_INFO("Received UDP packet from "
                     << Net::ipFromSockAddr(senderAddr) << ":"

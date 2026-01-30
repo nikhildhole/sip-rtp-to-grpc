@@ -17,6 +17,7 @@ public:
   void setState(DialogState s) { state_ = s; }
 
   int getLocalSeq() const { return localSeq_; }
+  int getNextLocalSeq() { return ++localSeq_; }
   int getRemoteSeq() const { return remoteSeq_; }
 
   void updateRemoteSeq(int seq);
