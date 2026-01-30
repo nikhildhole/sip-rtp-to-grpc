@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   sut:
     build: 
@@ -20,7 +18,9 @@ services:
         ipv4_address: 172.20.0.10
 
   tester-sip:
-    image: ctubio/sipp
+    build:
+      context: .
+      dockerfile: Dockerfile.sipp
     container_name: sipp_tester
     volumes:
       - ./sipp:/tests/sipp

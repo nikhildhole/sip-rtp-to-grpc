@@ -1,0 +1,17 @@
+FROM ubuntu:22.04
+
+# Build and install sipp from source (package not available in base repos)
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    git build-essential cmake pkg-config libpcap-dev libssl-dev libpcre3-dev libncurses-dev ca-certificates curl \
+ && git clone --depth 1 https://github.com/SIPp/sipp.git /tmp/sipp \
+ && cd /tmp/sipp \
+ && git submodule update --init --recursive --depth 1 || true \
+ && mkdir -p /tmp/sipp/build && cd /tmp/sipp/build \
+ && cmake .. -DBUILD_UNITTESTS=OFF -DBUILD_TESTS=OFF -DUNIT_TESTS=OFF && make -j"$(nproc)" && make install \
+ && rm -rf /var/lib/apt/lists/* /tmp/sipp
+
+WORKDIR /tests
+
+# Keep container alive for manual execution or scripts (overridden by compose entrypoint if needed)
+ENTRYPOINT ["tail", "-f", "/dev/null"]
